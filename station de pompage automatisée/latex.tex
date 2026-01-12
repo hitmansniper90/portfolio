@@ -1,0 +1,380 @@
+\documentclass[12pt,a4paper]{report}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{array}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  urlcolor=black,
+  citecolor=black
+}
+
+\title{\textbf{Documentation Projet -- Station de Pompage Automatisée}\\
+\large API (Machine Expert Basic) \& IHM (Vijeo Designer Basic)}
+\author{Hail Amine \\
+\small Portfolio Automatisme / Supervision}
+\date{décembre 2023}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\clearpage
+
+% =========================
+\chapter*{Résumé}
+\addcontentsline{toc}{chapter}{Résumé}
+Ce projet consiste à automatiser une station de pompage pilotée par un automate programmable (API), puis à réaliser une interface homme-machine (IHM) pour superviser le fonctionnement.
+Le projet est construit par étapes : commande d'une pompe, ajout des états (voyants), gestion des défauts et sécurités (surchauffe, arrêt d'urgence, marche à sec), extension multi-pompes avec alternance et optimisation par temps de marche, prise en compte d'un niveau analogique, puis supervision (communication, animation, alarmes, navigation, droits utilisateurs).
+
+\chapter{Contexte et objectifs}
+
+\section{Contexte}
+Une station de pompage doit assurer un fonctionnement fiable tout en protégeant les équipements :
+\begin{itemize}[itemsep=0.2em]
+  \item Démarrer/arrêter une pompe sur commande opérateur.
+  \item Afficher clairement l'état (marche / arrêt / défaut).
+  \item Empêcher les démarrages dangereux (défaut, marche à sec).
+  \item Garantir la sécurité via arrêt d'urgence.
+  \item Optimiser l'exploitation en répartissant l'usure sur plusieurs pompes.
+  \item Superviser le système via une IHM (alarmes, navigation, accès sécurisé).
+\end{itemize}
+
+\section{Objectifs fonctionnels (cahier des charges)}
+\subsection{Commande de base}
+\begin{itemize}[itemsep=0.2em]
+  \item La pompe démarre quand l'opérateur appuie sur \textbf{Marche}.
+  \item La pompe s'arrête quand l'opérateur appuie sur \textbf{Arrêt}.
+\end{itemize}
+
+\subsection{Signalisation d'état}
+\begin{itemize}[itemsep=0.2em]
+  \item Voyant \textbf{vert} allumé si la pompe est en marche.
+  \item Voyant \textbf{rouge} allumé si la pompe est à l'arrêt.
+\end{itemize}
+
+\subsection{Défaut et acquittement}
+\begin{itemize}[itemsep=0.2em]
+  \item Voyant \textbf{orange} allumé en cas de défaut (ex : surchauffe).
+  \item Le défaut reste mémorisé et ne disparaît qu'après appui sur \textbf{RESET}.
+  \item Tant que le défaut est actif : \textbf{interdiction de démarrage}.
+\end{itemize}
+
+\subsection{Protections et sécurité}
+\begin{itemize}[itemsep=0.2em]
+  \item Protection contre la marche à sec via une \textbf{poire de niveau NTB}.
+  \item Présence d'un \textbf{arrêt d'urgence (AU)}, traité comme un défaut.
+\end{itemize}
+
+\subsection{Multi-pompes et optimisation}
+\begin{itemize}[itemsep=0.2em]
+  \item Ajout d'une 2\textsuperscript{e} pompe : alternance à chaque démarrage.
+  \item Si la pompe sélectionnée est en défaut : bascule vers une autre pompe.
+  \item Calcul du \textbf{temps de marche} de chaque pompe (en secondes), à l'aide d'une variable système.
+  \item Alternance \textbf{temporelle} : démarrer la pompe ayant le temps de fonctionnement le plus faible.
+  \item Extension à 3 pompes selon la même logique.
+\end{itemize}
+
+\subsection{Gestion du niveau analogique et du nombre de pompes}
+\begin{itemize}[itemsep=0.2em]
+  \item Ajout d'une sonde analogique : niveau mesuré entre \textbf{0 et 500 cm}.
+  \item Règles de fonctionnement :
+  \begin{itemize}[itemsep=0.2em]
+    \item Au-dessus de \textbf{350 cm} : \textbf{2 pompes} en marche.
+    \item Au-dessus de \textbf{200 cm} : \textbf{1 pompe} en marche.
+    \item En dessous de \textbf{100 cm} : \textbf{arrêt des pompes}.
+    \item Choix des pompes basé sur le \textbf{temps de marche le plus faible}.
+  \end{itemize}
+\end{itemize}
+
+\section{Outils logiciels}
+\begin{itemize}[itemsep=0.2em]
+  \item Programmation API : \textbf{Machine Expert Basic}.
+  \item Supervision : \textbf{Vijeo Designer Basic}.
+  \item Communication IHM--API : \textbf{Modbus TCP/IP}.
+\end{itemize}
+
+\chapter{Architecture technique}
+
+\section{Entrées / Sorties (E/S)}
+\subsection{E/S TOR (Tout Ou Rien)}
+\begin{longtable}{@{}p{5cm}p{3cm}p{7cm}@{}}
+\toprule
+\textbf{Signal} & \textbf{Adresse} & \textbf{Rôle} \\
+\midrule
+\endhead
+BP\_MARCHE & \%I0.0 & Commande de démarrage \\
+BP\_ARRET & \%I0.1 & Commande d'arrêt \\
+SURCHAUFFE\_PMP & \%I0.2 & Détection défaut surchauffe \\
+RESET & \%I0.3 & Acquittement défaut (réarmement) \\
+POIRE\_NTB & \%I0.4 & Niveau bas (anti-marche à sec) \\
+ARR\_URG & \%I0.5 & Arrêt d'urgence (défaut sécurité) \\
+\midrule
+MAR\_POMPE\_1 & \%Q0.0 & Sortie commande pompe 1 \\
+V\_MARCHE & \%Q0.1 & Voyant vert : pompe en marche \\
+V\_ARRET & \%Q0.2 & Voyant rouge : pompe arrêt \\
+V\_DEFAUT & \%Q0.3 & Voyant orange : défaut \\
+\bottomrule
+\end{longtable}
+
+\subsection{Entrée analogique}
+\begin{longtable}{@{}p{5cm}p{3cm}p{7cm}@{}}
+\toprule
+\textbf{Signal} & \textbf{Adresse} & \textbf{Rôle} \\
+\midrule
+\endhead
+NIV\_RES & \%IW1.0 & Niveau analogique du réservoir (0 à 500 cm) \\
+\bottomrule
+\end{longtable}
+
+\section{Hypothèses de fonctionnement}
+\begin{itemize}[itemsep=0.2em]
+  \item Une pompe ne peut démarrer que si les sécurités sont satisfaites (pas de défaut, niveau bas non atteint).
+  \item L'arrêt d'urgence a priorité sur toute commande (mise en sécurité immédiate).
+  \item Les sorties voyants reflètent l'état réel de l'installation (marche/arrêt/défaut).
+\end{itemize}
+
+\chapter{Analyse fonctionnelle et logique de commande (API)}
+
+\section{Principes généraux}
+La logique API s'articule autour de trois blocs :
+\begin{enumerate}[itemsep=0.2em]
+  \item \textbf{Gestion des commandes opérateur} (Marche / Arrêt).
+  \item \textbf{Gestion des défauts et sécurités} (surchauffe, AU, marche à sec).
+  \item \textbf{Gestion des pompes} (sélection, alternance, temps de marche, nombre de pompes en service).
+\end{enumerate}
+
+\section{Gestion Marche / Arrêt (mémoire de commande)}
+\subsection{Besoin}
+La pompe doit rester en marche après un appui sur \textbf{Marche} et s'arrêter sur appui \textbf{Arrêt}.
+
+\subsection{Principe}
+On utilise une \textbf{mémoire de marche} (bascule) :
+\begin{itemize}[itemsep=0.2em]
+  \item SET par BP\_MARCHE (si autorisé).
+  \item RESET par BP\_ARRET (ou défaut / AU / niveau bas).
+\end{itemize}
+
+\subsection{Condition d'autorisation}
+La mise en marche est autorisée si :
+\begin{itemize}[itemsep=0.2em]
+  \item Aucun défaut n'est actif (y compris arrêt d'urgence).
+  \item La poire NTB indique que la marche à sec n'est pas présente (niveau bas non atteint).
+\end{itemize}
+
+\section{Gestion des défauts (surchauffe + AU) et Reset}
+\subsection{Détection}
+Le défaut est activé si :
+\begin{itemize}[itemsep=0.2em]
+  \item SURCHAUFFE\_PMP = 1 \quad \textbf{ou}
+  \item ARR\_URG = 1
+\end{itemize}
+
+\subsection{Mémorisation et acquittement}
+\begin{itemize}[itemsep=0.2em]
+  \item Le défaut est \textbf{mémorisé} (latched).
+  \item Il ne disparaît qu'à l'appui sur \textbf{RESET} (et si la cause du défaut a disparu).
+  \item Tant que défaut actif : commande pompe forcée à 0 + démarrage interdit.
+\end{itemize}
+
+\subsection{Signalisation}
+\begin{itemize}[itemsep=0.2em]
+  \item V\_DEFAUT = 1 si défaut actif.
+\end{itemize}
+
+\section{Protection marche à sec (NTB)}
+\begin{itemize}[itemsep=0.2em]
+  \item Si POIRE\_NTB signale niveau bas : arrêt immédiat des pompes.
+  \item Démarrage interdit tant que la condition NTB n'est pas redevenue correcte.
+\end{itemize}
+
+\section{Extension multi-pompes : alternance et optimisation}
+
+\subsection{Alternance à chaque démarrage (2 pompes)}
+\subsubsection{Besoin}
+À chaque nouvelle demande de marche, alterner automatiquement entre pompe 1 et pompe 2.
+
+\subsubsection{Principe}
+\begin{itemize}[itemsep=0.2em]
+  \item Une variable interne \textbf{SEL} (sélecteur) bascule à chaque démarrage validé.
+  \item La pompe choisie est commandée si elle n'est pas en défaut.
+  \item Si la pompe choisie est en défaut : bascule vers l'autre pompe.
+\end{itemize}
+
+\subsection{Temps de marche (compteur en secondes)}
+\subsubsection{Besoin}
+Mesurer la durée cumulée de fonctionnement de chaque pompe.
+
+\subsubsection{Principe}
+\begin{itemize}[itemsep=0.2em]
+  \item Utiliser une impulsion système (ex : \texttt{\%S6}) comme base de temps (1 s).
+  \item Quand la pompe est active, incrémenter son compteur \textbf{T\_P1}, \textbf{T\_P2}, etc.
+\end{itemize}
+
+\subsection{Alternance temporelle (pompe la moins utilisée)}
+\subsubsection{Besoin}
+Choisir la pompe ayant le \textbf{temps de marche le plus faible} pour équilibrer l'usure.
+
+\subsubsection{Principe}
+\begin{itemize}[itemsep=0.2em]
+  \item À chaque démarrage :
+  \begin{itemize}[itemsep=0.2em]
+    \item comparer T\_P1 et T\_P2,
+    \item sélectionner la plus petite valeur,
+    \item vérifier la disponibilité (pas de défaut), sinon sélectionner l'autre.
+  \end{itemize}
+\end{itemize}
+
+\subsection{Extension à 3 pompes}
+\begin{itemize}[itemsep=0.2em]
+  \item Ajouter une 3\textsuperscript{e} pompe et son compteur T\_P3.
+  \item À chaque démarrage, sélectionner la pompe disponible ayant le plus petit temps (min(T\_P1,T\_P2,T\_P3)).
+  \item Si la pompe sélectionnée est en défaut : choisir la suivante la plus faible parmi les disponibles.
+\end{itemize}
+
+\section{Gestion du nombre de pompes selon niveau analogique}
+\subsection{Entrée NIV\_RES}
+Le niveau est lu sur \textbf{NIV\_RES (\%IW1.0)} et correspond à une plage de \textbf{0 à 500 cm}.
+
+\subsection{Règles de commande}
+\begin{itemize}[itemsep=0.2em]
+  \item Si NIV\_RES $>$ 350 cm : \textbf{2 pompes} demandées.
+  \item Si NIV\_RES $>$ 200 cm : \textbf{1 pompe} demandée.
+  \item Si NIV\_RES $<$ 100 cm : \textbf{0 pompe} (arrêt).
+\end{itemize}
+
+\subsection{Choix des pompes}
+\begin{itemize}[itemsep=0.2em]
+  \item Pour 1 pompe : choisir la pompe disponible ayant le plus faible temps.
+  \item Pour 2 pompes : choisir les \textbf{deux} pompes disponibles avec les temps les plus faibles.
+  \item En cas de défaut sur une pompe : l'exclure automatiquement de la sélection.
+\end{itemize}
+
+\chapter{Supervision IHM (Vijeo Designer Basic)}
+
+\section{Création de la page synoptique}
+\begin{itemize}[itemsep=0.2em]
+  \item Réaliser le \textbf{dessin de la station} (réservoir, pompes, voyants, niveau, boutons).
+\end{itemize}
+
+\section{Déclaration de l'API (communication Modbus TCP/IP)}
+\begin{enumerate}[itemsep=0.2em]
+  \item Dans \textbf{IO Manager} : clic droit $\rightarrow$ \textbf{New Driver}.
+  \item Choisir \textbf{Modbus TCP/IP -- Modbus Equipement}.
+  \item Configurer l'équipement (adresse IP, paramètres Modbus).
+\end{enumerate}
+
+\section{Importation des variables}
+\begin{itemize}[itemsep=0.2em]
+  \item Importer le projet / tags depuis \textbf{Machine Expert Basic} vers \textbf{Vijeo Designer Basic}.
+\end{itemize}
+
+\section{Animation des objets}
+\begin{itemize}[itemsep=0.2em]
+  \item Associer chaque objet IHM (voyant, bouton, valeur niveau) à la variable correspondante (état pompe, défaut, etc.).
+\end{itemize}
+
+\section{Simulation}
+\begin{itemize}[itemsep=0.2em]
+  \item Lancer la simulation via \textbf{Build $\rightarrow$ Simulate}.
+  \item Vérifier l'affichage, les commandes, et le retour d'état.
+\end{itemize}
+
+\section{Gestion des alarmes}
+\begin{enumerate}[itemsep=0.2em]
+  \item Ajouter un \textbf{groupe d'alarmes}.
+  \item Ajouter les variables concernées (défauts, AU, niveau bas, etc.).
+  \item Créer une \textbf{page d'alarmes}.
+  \item Insérer un \textbf{tableau d'alarmes} pour afficher la liste.
+\end{enumerate}
+
+\section{Navigation entre pages}
+\begin{itemize}[itemsep=0.2em]
+  \item Ajouter deux boutons pour passer entre :
+  \begin{itemize}[itemsep=0.2em]
+    \item la page synoptique,
+    \item la page alarmes.
+  \end{itemize}
+\end{itemize}
+
+\section{Droits utilisateurs (sécurité)}
+\subsection{Création utilisateur}
+\begin{itemize}[itemsep=0.2em]
+  \item Déclarer l'utilisateur \textbf{operateur1} avec un mot de passe.
+  \item \textbf{operateur1} est le seul autorisé à accéder à la page d'alarmes.
+\end{itemize}
+
+\subsection{Restriction d'accès page alarmes}
+\begin{itemize}[itemsep=0.2em]
+  \item Définir le niveau de sécurité de la page d'alarmes (ex : \textbf{SecurityGroup01}) dans \textbf{Security level}.
+\end{itemize}
+
+\subsection{Bouton de login / logout}
+\begin{itemize}[itemsep=0.2em]
+  \item Ajouter le bouton de login depuis la librairie.
+  \item Ajouter une action de type \textbf{Switch} :
+  \begin{itemize}[itemsep=0.2em]
+    \item action \textbf{Logout},
+    \item puis action \textbf{Login}.
+  \end{itemize}
+\end{itemize}
+
+\chapter{Validation et tests}
+
+\section{Plan de tests (exemples)}
+\begin{longtable}{@{}p{4cm}p{6cm}p{6cm}@{}}
+\toprule
+\textbf{Test} & \textbf{Procédure} & \textbf{Résultat attendu} \\
+\midrule
+\endhead
+Marche / Arrêt & Appuyer Marche puis Arrêt & La pompe démarre puis s'arrête \\
+Voyants & Observer V\_MARCHE / V\_ARRET & Vert si marche, rouge si arrêt \\
+Défaut surchauffe & Forcer SURCHAUFFE\_PMP=1 & V\_DEFAUT=1, pompe stoppée, démarrage interdit \\
+Reset défaut & Appuyer RESET après disparition cause & V\_DEFAUT=0, démarrage possible \\
+Marche à sec & Activer POIRE\_NTB (niveau bas) & Arrêt pompes, démarrage interdit \\
+Arrêt d'urgence & Activer ARR\_URG & Arrêt immédiat, défaut actif \\
+Alternance 2 pompes & Démarrer/arrêter plusieurs fois & Sélection alternée, bascule si défaut \\
+Temps de marche & Laisser tourner pompe & T\_P* augmente en secondes \\
+Niveau analogique & Faire varier NIV\_RES & 0/1/2 pompes selon seuils (100/200/350 cm) \\
+IHM / alarmes & Provoquer un défaut & Apparition dans la page alarmes \\
+Droits opérateur & Accéder alarmes sans login & Accès refusé ; OK après login operateur1 \\
+\bottomrule
+\end{longtable}
+
+\chapter{Résultats et compétences}
+
+\section{Livrables}
+\begin{itemize}[itemsep=0.2em]
+  \item Programme API (Machine Expert Basic) : logique pompes, sécurités, alternance, compteurs temps.
+  \item Projet IHM (Vijeo Designer Basic) : synoptique, animations, alarmes, navigation, gestion utilisateurs.
+  \item Dossier de tests : scénarios et validations.
+\end{itemize}
+
+\section{Compétences mobilisées}
+\begin{itemize}[itemsep=0.2em]
+  \item Analyse fonctionnelle (commande, états, défauts, sécurité).
+  \item Programmation d'automate (mémorisation, priorités, temporisation/compteurs).
+  \item Gestion d'E/S TOR et analogiques (lecture niveau, seuils).
+  \item Stratégie d'exploitation multi-pompes (alternance, équilibrage par temps de marche).
+  \item Mise en place supervision : communication Modbus TCP/IP, import tags, animation, alarmes.
+  \item Sécurisation de l'IHM : utilisateurs, niveaux d'accès, login/logout.
+\end{itemize}
+
+\chapter*{Conclusion}
+\addcontentsline{toc}{chapter}{Conclusion}
+Le projet met en oeuvre une automatisation complète d'une station de pompage, depuis la commande locale jusqu'à la supervision.
+Les fonctions de sécurité (défaut, arrêt d'urgence, marche à sec) assurent la protection des équipements et des personnes.
+L'extension multi-pompes, combinée au suivi des temps de marche et à la mesure de niveau analogique, améliore la disponibilité et l'équilibrage d'usure.
+Enfin, l'IHM apporte une supervision structurée (alarmes, navigation) et une sécurisation des accès via comptes utilisateurs.
+
+\end{document}
